@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.rows import dict_row
 
-from db import DSN, SCHEMA, connect
+from db import DSN, SCHEMA, connect, purge_fragments
 from rules import judge
 
 
@@ -73,6 +73,15 @@ def listen_loop():
 
 def main():
     print("pv iv-scan notify worker started", flush=True)
+    try:
+        with connect() as conn:
+            conn.execute(SCHEMA)
+            removed = purge_fragments(conn)
+            conn.commit()
+        if removed:
+            print(f"purged {removed} swapped fragment rows", flush=True)
+    except Exception as exc:
+        print(f"purge error: {exc}", flush=True)
     threading.Thread(target=listen_loop, name="iv-listen", daemon=True).start()
     poll_loop()
 

@@ -34,3 +34,13 @@ CREATE TRIGGER trg_iv_scan_notify
 AFTER INSERT ON iv_scans
 FOR EACH ROW EXECUTE FUNCTION notify_iv_scan();
 """
+
+# 列义写反的残片：组串格成了纯数字（填充因子），原组串号已不可恢复，整行删除。
+PURGE_FRAGMENTS = """
+DELETE FROM iv_scans
+WHERE string_code ~ '^[0-9]+(\\.[0-9]+)?$';
+"""
+
+
+def purge_fragments(conn) -> int:
+    return conn.execute(PURGE_FRAGMENTS).rowcount

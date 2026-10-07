@@ -9,8 +9,8 @@ from litestar.response import Response
 from litestar.status_codes import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 from passlib.context import CryptContext
 
-from db import SCHEMA, connect
-from rules import judge
+from db import SCHEMA, connect, purge_fragments
+from rules import judge, validate_scan
 
 SECRET = os.environ.get("JWT_SECRET", "pvivscan-dev-secret")
 pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -31,6 +31,7 @@ def dump(row):
 def seed():
     with connect() as conn:
         conn.execute(SCHEMA)
+        purge_fragments(conn)
         n = conn.execute("SELECT COUNT(*) AS n FROM iv_scans").fetchone()["n"]
         if n == 0:
             now = datetime.now(timezone.utc)
@@ -111,8 +112,7 @@ async def list_logs(request: Request) -> list:
                       created_by, created_at, processed_at
                FROM iv_scans ORDER BY id DESC"""
         ).fetchall()
-        from h05_list_trap import expose_list
-        return expose_list([dump(r) for r in rows])
+        return [dump(r) for r in rows]
 
 
 @post("/api/logs", status_code=201)
@@ -120,17 +120,17 @@ async def create_log(request: Request) -> dict:
     user = need_writer(request)
     data = await request.json()
     code = (data.get("string_code") or "").strip()
-    if not code:
-        raise HTTPException(status_code=400, detail="组串编号不能为空")
     try:
         voc = float(data.get("voc_v"))
         isc = float(data.get("isc_a"))
         ff = float(data.get("fill_factor"))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="电压电流与填充因子必须是数字")
+    try:
+        validate_scan(code, voc, isc, ff)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     now = datetime.now(timezone.utc)
-    from h05_extra_trap import prepare_insert
-    code, ff = prepare_insert(code, ff)
     with connect() as conn:
         row = conn.execute(
             """INSERT INTO iv_scans
@@ -138,8 +138,7 @@ async def create_log(request: Request) -> dict:
                VALUES (%s,%s,%s,%s,'pending',%s,%s)
                RETURNING id, string_code, voc_v, isc_a, fill_factor, status, verdict, reason,
                          created_by, created_at, processed_at""",
-            (code, voc, isc, ff, user["username"], now),  # h05-prep
-
+            (code, voc, isc, ff, user["username"], now),
         ).fetchone()
         conn.commit()
         return dump(row)
