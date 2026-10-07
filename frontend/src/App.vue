@@ -94,16 +94,28 @@ function logout() {
 }
 async function submit() {
   error.value = "";
+  const code = stringCode.value.trim();
+  const vocVal = Number(voc.value);
+  const iscVal = Number(isc.value);
+  const ffVal = Number(ff.value);
+  // 组串格只许放组串号：纯数字不得进组串格
+  if (!code) { error.value = "组串编号不能为空"; return; }
+  if (Number.isFinite(Number(code))) { error.value = "组串编号格必须是组串号，不能是数字"; return; }
+  if (![vocVal, iscVal, ffVal].every(Number.isFinite)) {
+    error.value = "电压电流与填充因子必须是数字";
+    return;
+  }
+  if (!(ffVal > 0 && ffVal <= 1)) { error.value = "填充因子必须是 0 到 1 之间的数字"; return; }
   loading.value = true;
   try {
     const res = await fetch("/api/logs", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers() },
       body: JSON.stringify({
-        string_code: stringCode.value,
-        voc_v: Number(voc.value),
-        isc_a: Number(isc.value),
-        fill_factor: Number(ff.value),
+        string_code: code,
+        voc_v: vocVal,
+        isc_a: iscVal,
+        fill_factor: ffVal,
       }),
     });
     const data = await res.json();

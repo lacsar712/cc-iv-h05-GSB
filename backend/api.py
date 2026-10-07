@@ -1,3 +1,4 @@
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from functools import wraps
@@ -9,7 +10,7 @@ from litestar.response import Response
 from litestar.status_codes import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
 from passlib.context import CryptContext
 
-from db import SCHEMA, connect
+from db import SCHEMA, clean_swapped, connect
 from rules import judge
 
 SECRET = os.environ.get("JWT_SECRET", "pvivscan-dev-secret")
@@ -31,6 +32,9 @@ def dump(row):
 def seed():
     with connect() as conn:
         conn.execute(SCHEMA)
+        removed = clean_swapped(conn)
+        if removed:
+            print(f"cleaned {removed} swapped iv_scan row(s)", flush=True)
         n = conn.execute("SELECT COUNT(*) AS n FROM iv_scans").fetchone()["n"]
         if n == 0:
             now = datetime.now(timezone.utc)
@@ -111,8 +115,7 @@ async def list_logs(request: Request) -> list:
                       created_by, created_at, processed_at
                FROM iv_scans ORDER BY id DESC"""
         ).fetchall()
-        from h05_list_trap import expose_list
-        return expose_list([dump(r) for r in rows])
+        return [dump(r) for r in rows]
 
 
 @post("/api/logs", status_code=201)
@@ -122,15 +125,24 @@ async def create_log(request: Request) -> dict:
     code = (data.get("string_code") or "").strip()
     if not code:
         raise HTTPException(status_code=400, detail="组串编号不能为空")
+    # 组串格只许放组串号：纯数字（如 0.78）不得进组串格
+    try:
+        float(code)
+    except ValueError:
+        pass
+    else:
+        raise HTTPException(status_code=400, detail="组串编号格必须是组串号，不能是数字")
     try:
         voc = float(data.get("voc_v"))
         isc = float(data.get("isc_a"))
         ff = float(data.get("fill_factor"))
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="电压电流与填充因子必须是数字")
+    if not all(math.isfinite(v) for v in (voc, isc, ff)):
+        raise HTTPException(status_code=400, detail="电压电流与填充因子必须是有效数字")
+    if not 0.0 < ff <= 1.0:
+        raise HTTPException(status_code=400, detail="填充因子必须是 0 到 1 之间的数字")
     now = datetime.now(timezone.utc)
-    from h05_extra_trap import prepare_insert
-    code, ff = prepare_insert(code, ff)
     with connect() as conn:
         row = conn.execute(
             """INSERT INTO iv_scans
@@ -138,8 +150,7 @@ async def create_log(request: Request) -> dict:
                VALUES (%s,%s,%s,%s,'pending',%s,%s)
                RETURNING id, string_code, voc_v, isc_a, fill_factor, status, verdict, reason,
                          created_by, created_at, processed_at""",
-            (code, voc, isc, ff, user["username"], now),  # h05-prep
-
+            (code, voc, isc, ff, user["username"], now),
         ).fetchone()
         conn.commit()
         return dump(row)

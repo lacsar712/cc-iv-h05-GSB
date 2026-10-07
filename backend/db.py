@@ -9,6 +9,24 @@ def connect():
     return psycopg.connect(DSN, row_factory=dict_row)
 
 
+# 纯数字形态（含小数/科学计数法），与 Python float() 接受的写法对齐
+_NUMERIC_RE = r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$"
+
+# 删除“写到一半列义反了”的残片：
+# 组串格被写成纯数字，或数字格（填充因子）越界（不在 0~1）。
+CLEAN_SWAPPED = f"""
+DELETE FROM iv_scans
+WHERE btrim(string_code) ~ '{_NUMERIC_RE}'
+   OR fill_factor <= 0
+   OR fill_factor > 1;
+"""
+
+
+def clean_swapped(conn) -> int:
+    """清掉组串格/填充因子格串列的残行，返回删除条数。"""
+    return conn.execute(CLEAN_SWAPPED).rowcount
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS iv_scans (
     id serial PRIMARY KEY,

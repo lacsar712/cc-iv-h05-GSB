@@ -6,12 +6,14 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.rows import dict_row
 
-from db import DSN, SCHEMA, connect
+from db import DSN, SCHEMA, clean_swapped, connect
 from rules import judge
 
 
 def claim_id(conn, scan_id: int | None) -> bool:
     with conn.transaction():
+        # 先清掉组串格/FF 格串列的残片，避免用互换后的 FF 判反结论
+        clean_swapped(conn)
         if scan_id is not None:
             row = conn.execute(
                 """SELECT id, fill_factor FROM iv_scans
